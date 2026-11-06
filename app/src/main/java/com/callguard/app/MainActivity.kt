@@ -1,141 +1,198 @@
 package com.callguard.app
 
+import android.app.AppOpsManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricPrompt
+import android.widget.Toast
 import androidx.fragment.app.FragmentActivity
-import java.util.concurrent.Executor
 
 class MainActivity : FragmentActivity() {
-
-    private lateinit var statusText: TextView
+    private lateinit var content: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        buildScreen()
+        render()
     }
 
-    private fun buildScreen() {
-        val root = LinearLayout(this).apply {
+    override fun onResume() {
+        super.onResume()
+        if (::content.isInitialized) render()
+    }
+
+    private fun render() {
+        content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(28, 48, 28, 28)
+            setPadding(24, 32, 24, 28)
             setBackgroundColor(0xFFF5F7FB.toInt())
         }
 
         val title = TextView(this).apply {
             text = "CallGuard"
-            textSize = 32f
+            textSize = 30f
             setTextColor(0xFF172033.toInt())
-            gravity = Gravity.CENTER
         }
+        content.addView(title, fullWidth())
 
         val subtitle = TextView(this).apply {
-            text = "Your phone. Your access rules."
-            textSize = 16f
-            setTextColor(0xFF5B6578.toInt())
-            gravity = Gravity.CENTER
-            setPadding(0, 10, 0, 28)
-        }
-
-        val sectionTitle = TextView(this).apply {
-            text = "Security setup"
-            textSize = 20f
-            setTextColor(0xFF172033.toInt())
-            gravity = Gravity.CENTER
-        }
-
-        statusText = TextView(this).apply {
-            text = "Fingerprint authentication has not been tested yet."
+            text = "Choose which apps require authentication."
             textSize = 15f
             setTextColor(0xFF5B6578.toInt())
-            gravity = Gravity.CENTER
-            setPadding(0, 16, 0, 20)
+            setPadding(0, 6, 0, 18)
         }
+        content.addView(subtitle, fullWidth())
 
-        val biometricButton = Button(this).apply {
-            text = "Test fingerprint authentication"
+        val permissions = Button(this).apply {
+            text = "Set up required Android permissions"
             isAllCaps = false
-            setOnClickListener { testBiometrics() }
+            setOnClickListener { openPermissionSettings() }
         }
+        content.addView(permissions, fullWidth())
 
-        val info = TextView(this).apply {
-            text = "Next steps: add a private PIN, choose protected apps, and configure a safe call-only flow. Android verifies your fingerprint; CallGuard does not access or store fingerprint images or templates."
-            textSize = 14f
+        val permissionStatus = TextView(this).apply {
+            text = "Usage access: ${if (hasUsageAccess()) "Ready" else "Not enabled"}   •   Overlay: ${if (Settings.canDrawOverlays(this@MainActivity)) "Ready" else "Not enabled"}"
+            textSize = 13f
             setTextColor(0xFF5B6578.toInt())
-            setPadding(0, 28, 0, 0)
+            setPadding(0, 6, 0, 18)
+        }
+        content.addView(permissionStatus, fullWidth())
+
+        val pinTitle = TextView(this).apply {
+            text = if (SecurityStore.hasPin(this@MainActivity)) "PIN is configured" else "Create your CallGuard PIN"
+            textSize = 19f
+            setTextColor(0xFF172033.toInt())
+        }
+        content.addView(pinTitle, fullWidth())
+
+        val pinInput = EditText(this).apply {
+            hint = "Enter a PIN (at least 4 digits)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
+        content.addView(pinInput, fullWidth())
+
+        val savePin = Button(this).apply {
+            text = "Save / change PIN"
+            isAllCaps = false
+            setOnClickListener {
+                val pin = pinInput.text.toString()
+                if (pin.length < 4 || pin.any { !it.isDigit() }) {
+                    Toast.makeText(this@MainActivity, "Use at least 4 digits.", Toast.LENGTH_SHORT).show()
+                } else {
+                    SecurityStore.setPin(this@MainActivity, pin)
+                    pinInput.text.clear()
+                    Toast.makeText(this@MainActivity, "PIN saved on this device.", Toast.LENGTH_SHORT).show()
+                    render()
+                }
+            }
+        }
+        content.addView(savePin, fullWidth())
+
+        val appTitle = TextView(this).apply {
+            text = "Select apps to lock"
+            textSize = 21f
+            setTextColor(0xFF172033.toInt())
+            setPadding(0, 22, 0, 8)
+        }
+        content.addView(appTitle, fullWidth())
+
+        val appList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val protected = getSharedPreferences(SecurityStore.PREFS, Context.MODE_PRIVATE)
+            .getStringSet(SecurityStore.KEY_PROTECTED, emptySet())?.toMutableSet() ?: mutableSetOf()
+
+        val launchIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = packageManager.queryIntentActivities(launchIntent, 0)
+            .filter { it.activityInfo.packageName != packageName }
+            .distinctBy { it.activityInfo.packageName }
+            .sortedBy { it.loadLabel(packageManager).toString().lowercase() }
+
+        for (info in apps) {
+            val appPackage = info.activityInfo.packageName
+            val check = CheckBox(this).apply {
+                text = info.loadLabel(packageManager).toString()
+                setCompoundDrawablesWithIntrinsicBounds(info.loadIcon(packageManager), null, null, null)
+                compoundDrawablePadding = 18
+                textSize = 16f
+                isChecked = protected.contains(appPackage)
+                setPadding(4, 10, 4, 10)
+                setOnCheckedChangeListener { _, checked ->
+                    if (checked) protected.add(appPackage) else protected.remove(appPackage)
+                    getSharedPreferences(SecurityStore.PREFS, Context.MODE_PRIVATE)
+                        .edit().putStringSet(SecurityStore.KEY_PROTECTED, protected.toSet()).apply()
+                }
+            }
+            appList.addView(check, fullWidth())
         }
 
-        root.addView(title, matchWidth())
-        root.addView(subtitle, matchWidth())
-        root.addView(sectionTitle, matchWidth())
-        root.addView(statusText, matchWidth())
-        root.addView(
-            biometricButton,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
-        root.addView(info, matchWidth())
-        setContentView(root)
+        if (apps.isEmpty()) {
+            appList.addView(TextView(this).apply {
+                text = "No launchable apps were found."
+                setTextColor(0xFF5B6578.toInt())
+            })
+        }
+        content.addView(appList, fullWidth())
+
+        val start = Button(this).apply {
+            text = "Enable app protection"
+            isAllCaps = false
+            setOnClickListener {
+                if (!SecurityStore.hasPin(this@MainActivity)) {
+                    Toast.makeText(this@MainActivity, "Create a PIN first.", Toast.LENGTH_LONG).show()
+                } else if (protected.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "Select at least one app.", Toast.LENGTH_LONG).show()
+                } else if (!hasUsageAccess() || !Settings.canDrawOverlays(this@MainActivity)) {
+                    openPermissionSettings()
+                } else {
+                    val service = Intent(this@MainActivity, AppMonitorService::class.java)
+                    androidx.core.content.ContextCompat.startForegroundService(this@MainActivity, service)
+                    Toast.makeText(this@MainActivity, "App protection service started.", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        content.addView(start, fullWidth())
+
+        val note = TextView(this).apply {
+            text = "Keep CallGuard's protection notification visible. Android may stop background services, and some system or secure screens cannot be covered. This prototype should be tested before relying on it."
+            textSize = 13f
+            setTextColor(0xFF5B6578.toInt())
+            setPadding(0, 18, 0, 0)
+        }
+        content.addView(note, fullWidth())
+
+        val scroll = ScrollView(this).apply { addView(content) }
+        setContentView(scroll)
     }
 
-    private fun matchWidth() = LinearLayout.LayoutParams(
+    private fun openPermissionSettings() {
+        if (!hasUsageAccess()) {
+            startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+        } else if (!Settings.canDrawOverlays(this)) {
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+        } else {
+            Toast.makeText(this, "Required permissions are enabled.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun hasUsageAccess(): Boolean {
+        val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        @Suppress("DEPRECATION")
+        val mode = appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), packageName)
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun fullWidth() = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.WRAP_CONTENT
     )
-
-    private fun testBiometrics() {
-        val biometricManager = BiometricManager.from(this)
-        when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
-            BiometricManager.BIOMETRIC_SUCCESS -> showBiometricPrompt()
-            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE ->
-                updateStatus("This device does not have biometric hardware.")
-            BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE ->
-                updateStatus("Biometric hardware is currently unavailable.")
-            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED ->
-                updateStatus("No fingerprint is enrolled. Add one in Android Settings, then try again.")
-            else -> updateStatus("Strong biometric authentication is not currently available.")
-        }
-    }
-
-    private fun showBiometricPrompt() {
-        val executor = Executor { command -> runOnUiThread(command) }
-        val callback = object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                super.onAuthenticationSucceeded(result)
-                updateStatus("Fingerprint verified by Android. CallGuard did not receive fingerprint data.")
-            }
-
-            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                super.onAuthenticationError(errorCode, errString)
-                updateStatus("Authentication ended: $errString")
-            }
-
-            override fun onAuthenticationFailed() {
-                super.onAuthenticationFailed()
-                updateStatus("Fingerprint not recognized. You can try again.")
-            }
-        }
-
-        val prompt = BiometricPrompt(this, executor, callback)
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Unlock CallGuard")
-            .setSubtitle("Verify using your enrolled fingerprint")
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-            .setNegativeButtonText("Cancel")
-            .build()
-
-        prompt.authenticate(promptInfo)
-    }
-
-    private fun updateStatus(message: String) {
-        statusText.text = message
-    }
 }
