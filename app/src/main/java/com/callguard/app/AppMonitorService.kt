@@ -70,11 +70,9 @@ class AppMonitorService : Service() {
                     if (System.currentTimeMillis() > allowedUntil && lockedPackage != candidate) {
                         showLock(candidate)
                     }
-                } else if (candidate != null && candidate != lockedPackage) {
-                    // Keep an existing lock visible until its app is authenticated.
                 }
             } catch (_: Exception) {
-                // The service remains alive; the persistent notification indicates monitoring status.
+                // Keep the service alive; the persistent notification indicates monitoring status.
             }
             SystemClock.sleep(450)
         }
@@ -130,6 +128,8 @@ class AppMonitorService : Service() {
             text = "Use fingerprint"
             isAllCaps = false
             setOnClickListener {
+                // Remove the overlay first so the system biometric prompt can be used.
+                removeLock()
                 val auth = Intent(this@AppMonitorService, AuthActivity::class.java)
                     .putExtra(AuthActivity.EXTRA_PACKAGE, appPackage)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
