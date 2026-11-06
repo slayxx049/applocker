@@ -10,7 +10,9 @@ android {
     defaultConfig {
         applicationId = "com.callguard.app"
         minSdk = 23
-        targetSdk = 35
+        // Keep target 32 for this prototype's foreground-service compatibility.
+        // Revisit target SDK and service declarations before a production release.
+        targetSdk = 32
         versionCode = 1
         versionName = "0.1.0"
     }
@@ -34,4 +36,5 @@ android {
 dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.5")
     implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.core:core-ktx:1.15.0")
 }
